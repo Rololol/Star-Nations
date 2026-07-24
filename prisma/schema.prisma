@@ -1,0 +1,265 @@
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ============================================================
+// FACTION — 5 playable factions with lore & gameplay bonuses
+// ============================================================
+model Faction {
+  id      Int    @id @default(autoincrement())
+  name    String @unique
+  lore    String
+  bonuses String
+
+  users User[]
+  stars Star[]
+  fleets Fleet[]
+
+  @@map("factions")
+}
+
+// ============================================================
+// USER — player account bound to a faction
+// ============================================================
+model User {
+  id           Int      @id @default(autoincrement())
+  email        String   @unique
+  displayName  String   @unique
+  passwordHash String
+
+  factionId Int
+  faction   Faction @relation(fields: [factionId], references: [id])
+
+  title    String?  // "Commander", "Admiral", "Governor", etc.
+  bio      String?  // player description
+  homeStarId  Int?    @unique
+  homeStar    Star?   @relation("UserHomeStar", fields: [homeStarId], references: [id])
+
+  resources         String   @default("{\"credits\":2000,\"titan_erz\":400,\"deuterium\":400,\"seltene_erden\":200,\"titan_legierung\":0,\"deuterium_zellen\":0,\"mikro_prozessoren\":0,\"quanten_kerne\":0,\"schiffshuellen\":0,\"plasma_waffen\":0,\"energy\":1000}")
+  stats             String   @default("{\"entrepreneurship\":100,\"maxEntrepreneurship\":100,\"statEnergy\":100,\"maxStatEnergy\":100,\"production\":0,\"companiesLimit\":1,\"lastStatRegen\":null}")
+  lastResourceUpdate DateTime @default(now())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  controlledStars Star[]   @relation("StarController")
+  fleets          Fleet[]
+  tradeOffers     TradeOffer[]
+  receivedOffers  TradeOffer[] @relation("TradeBuyer")
+  activityLogs    ActivityLog[]
+  buildings       SystemBuilding[]
+  jobOffers       JobOffer[]
+  companies       Company[]
+  employments     CompanyEmployee[]
+
+  @@map("users")
+}
+
+model SystemBuilding {
+  id              Int          @id @default(autoincrement())
+  starId          Int
+  star            Star         @relation(fields: [starId], references: [id])
+  ownerId         Int
+  owner           User         @relation(fields: [ownerId], references: [id])
+  buildingTypeId  String
+  buildingType    BuildingType @relation(fields: [buildingTypeId], references: [id])
+  level           Int          @default(1)
+  isPaused        Boolean      @default(false)
+  isConstructing  Boolean      @default(true)
+  constructionEnd DateTime     @default(now())
+  lastCollectedAt DateTime     @default(now())
+  requiredWorkers Int          @default(5)
+  currentWorkers  Int          @default(0)
+  offeredWage     Float        @default(10.0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  jobs JobOffer[]
+
+  @@unique([starId, buildingTypeId])
+  @@map("system_buildings")
+}
+
+model JobOffer {
+  id         Int            @id @default(autoincrement())
+  buildingId Int
+  building   SystemBuilding @relation(fields: [buildingId], references: [id])
+  userId     Int
+  user       User           @relation(fields: [userId], references: [id])
+  hourlyWage Float
+  createdAt  DateTime       @default(now())
+
+  @@unique([userId, buildingId])
+  @@map("job_offers")
+}
+
+model BuildingType {
+  id              String   @id
+  name            String
+  description     String
+  category        String   // "EXTRACTION" | "REFINING" | "HIGH_TECH" | "ENERGY"
+  baseBuildCost   String   @default("{}")
+  baseBuildTime   Int      @default(60)
+  baseMaintenance String   @default("{}")
+  baseInput       String   @default("{}")
+  baseOutput      String   @default("{}")
+  icon            String   @default("Factory")
+
+  buildings      SystemBuilding[]
+  maxBuildingSlots Int      @default(4)
+
+  @@map("building_types")
+}
+
+// ============================================================
+// ACTIVITY LOG — chronicle of player actions
+// ============================================================
+model ActivityLog {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id])
+  action    String   // "claim_star", "build_fleet", "trade_sell", "trade_buy", "refine", etc.
+  detail    String   // human-readable description, e.g. "Claimed Xanmor Prime (System #23)"
+  metadata  String?  // JSON with related entity IDs
+
+  createdAt DateTime @default(now())
+
+  @@map("activity_logs")
+}
+
+model TradeOffer {
+  id           Int       @id @default(autoincrement())
+  sellerId     Int
+  seller       User      @relation(fields: [sellerId], references: [id])
+  buyerId      Int?      // optional: only for direct offers to a specific player
+  buyer        User?     @relation("TradeBuyer", fields: [buyerId], references: [id])
+  resourceType String    // any resource key from RESOURCE_LABELS
+  amount       Int       // total amount
+  pricePerUnit Int       // price in credits per unit
+  remaining    Int       // how many still available
+  isBuyOrder   Boolean   @default(false) // true = buying this resource, false = selling
+  status       String    @default("active") // "active" | "completed" | "cancelled"
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("trade_offers")
+}
+
+model TradeHistory {
+  id           Int      @id @default(autoincrement())
+  offerId      Int
+  resourceType String
+  amount       Int
+  pricePerUnit Int
+  totalPrice   Int
+  sellerId     Int
+  buyerId      Int
+  taxPaid      Int      @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@map("trade_history")
+}
+
+// ============================================================
+// COMPANY — player-owned company placed on a controlled star
+// ============================================================
+model Company {
+  id           Int      @id @default(autoincrement())
+  name         String   @default("Meine Firma")
+  ownerId      Int
+  owner        User     @relation(fields: [ownerId], references: [id])
+  starId       Int
+  star         Star     @relation(fields: [starId], references: [id])
+  reactorLevel Int      @default(1)
+  storageLevel Int      @default(1)
+  currentPP    Float    @default(0)
+  companyType  String   @default("titan_erz")
+  wagePerPP    Float    @default(1)
+  createdAt    DateTime @default(now())
+
+  employees CompanyEmployee[]
+
+  @@map("companies")
+}
+
+model CompanyEmployee {
+  id            Int      @id @default(autoincrement())
+  companyId     Int
+  company       Company  @relation(fields: [companyId], references: [id])
+  workerId      Int
+  worker        User     @relation(fields: [workerId], references: [id])
+  wagePerPP     Float    @default(1)
+  totalProduced Float    @default(0)
+  createdAt     DateTime @default(now())
+
+  @@unique([workerId, companyId])
+  @@map("company_employees")
+}
+
+// ============================================================
+// STAR — one of the 100 star systems in the galaxy
+// ============================================================
+model Star {
+  id     Int    @id
+  name   String @unique
+
+  sector      Int   // 1-5, faction home sector
+  ring        Int   // 1-5, distance from galactic center (1 = home world)
+  angleOffset Float @default(0) // fine-tuned angle within sector ring to avoid overlaps
+
+  ownerFactionId Int?
+  ownerFaction   Faction? @relation(fields: [ownerFactionId], references: [id])
+
+  controllerId Int?
+  controller   User? @relation("StarController", fields: [controllerId], references: [id])
+
+  homeForUser User? @relation("UserHomeStar")
+
+  resources String @default("{\"minerals\":100,\"energy\":100}")
+
+  fleetsHere     Fleet[] @relation("FleetCurrentStar")
+  fleetsIncoming Fleet[] @relation("FleetDestStar")
+  buildings      SystemBuilding[]
+  companies      Company[]
+  maxBuildingSlots Int    @default(4)
+
+  @@map("stars")
+}
+
+// ============================================================
+// FLEET — a group of ships owned by a player
+// ============================================================
+model Fleet {
+  id        Int      @id @default(autoincrement())
+  name      String
+
+  ownerId Int
+  owner   User @relation(fields: [ownerId], references: [id])
+
+  factionId Int
+  faction   Faction @relation(fields: [factionId], references: [id])
+
+  currentStarId Int
+  currentStar   Star @relation("FleetCurrentStar", fields: [currentStarId], references: [id])
+
+  destinationStarId Int?
+  destinationStar   Star? @relation("FleetDestStar", fields: [destinationStarId], references: [id])
+
+  shipCount Int     @default(1)
+  status    String  @default("idle") // "idle" | "moving"
+  arrivesAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("fleets")
+}
